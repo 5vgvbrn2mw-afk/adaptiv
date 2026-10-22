@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Адаптивный светофор с ИИ (повороты)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+:root{--bg:#eef1f4;--card:#fff;--tx:#10151c;--mut:#566170;--ln:#d6dce4;--ac:#0b6e4f;--bad:#b4442a;--road:#454b55;--grass:#dfe8dc;--mark:#e8c547;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1217;--card:#171c24;--tx:#e8ecf1;--mut:#98a3b2;--ln:#29313c;--ac:#3fcf9a;--bad:#ef8a6a;--road:#363b44;--grass:#18211c}}
+:root[data-theme="dark"]{--bg:#0e1217;--card:#171c24;--tx:#e8ecf1;--mut:#98a3b2;--ln:#29313c;--ac:#3fcf9a;--bad:#ef8a6a;--road:#363b44;--grass:#18211c}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:900px;margin:0 auto;padding:18px 14px 28px}
+h1{font-size:1.45rem;line-height:1.2;margin:0 0 6px}
+.sub{color:var(--mut);margin:0 0 14px;max-width:62ch}
+.ctl{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px 14px;display:grid;gap:10px}
+.row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 10px}
+.row label{font-weight:600}
+.row output{color:var(--mut);font-variant-numeric:tabular-nums}
+.row input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--ac)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;border:1px solid var(--ln);background:var(--bg);color:var(--tx);border-radius:8px;padding:7px 12px;min-height:40px;cursor:pointer}
+button[aria-pressed=true]{background:var(--ac);color:#fff;border-color:var(--ac)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.cmp{margin:12px 0;padding:11px 14px;border-radius:10px;border:1px solid var(--ln);background:var(--card);font-weight:600}
+.grid{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px}
+.card h2{font-size:1.05rem;margin:0}
+.card .tag{color:var(--mut);font-size:.9rem}
+canvas{width:100%;height:auto;aspect-ratio:1/1;display:block;margin:8px 0;border-radius:8px}
+.st{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0}
+.st div{background:var(--bg);border-radius:8px;padding:7px 8px}
+.st dt{color:var(--mut);font-size:.8rem}
+.st dd{margin:0;font-size:1.25rem;font-weight:700;font-variant-numeric:tabular-nums}
+.note{color:var(--mut);font-size:.9rem;margin-top:14px;max-width:70ch}
+[hidden]{display:none!important}
+.tabs{margin:0 0 12px}
+.filebtn{display:inline-flex;align-items:center;border:1px solid var(--ln);background:var(--bg);border-radius:8px;padding:7px 12px;min-height:40px;cursor:pointer}
+.mut{color:var(--mut);font-size:.92rem}
+.vwrap{position:relative;margin:12px 0;background:var(--ln);border-radius:10px;overflow:hidden;min-height:180px}
+.vwrap video{display:block;width:100%;height:auto}
+.vwrap canvas{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;margin:0;border-radius:0;touch-action:none}
+.st4{grid-template-columns:repeat(2,1fr);margin-bottom:12px}
+@media(min-width:720px){.st4{grid-template-columns:repeat(4,1fr)}}
+#map{height:260px;border-radius:10px;margin:12px 0;border:1px solid var(--ln);background:var(--card)}
+</style>
+</head>
+<body>
+<main>
+<h1>Адаптивный светофор с ИИ: повороты</h1>
+<nav class="btns tabs"><button data-tab="det" aria-pressed="true">Детекция</button><button data-tab="sim" aria-pressed="false">Симуляция</button></nav>
+<section id="tab-det">
+<p class="sub">Загрузи видео перекрёстка или включи камеру. Нарисуй пальцем две зоны на подъездах к перекрёстку, и ИИ посчитает машины в каждой.</p>
+<div class="ctl">
+ <div class="btns"><label class="filebtn">Выбрать видео<input id="vf" type="file" accept="video/*" hidden></label><button id="cam">Включить камеру</button><button id="pp">Пауза</button></div>
+ <div class="btns"><span>Рисуем:</span><button data-z="0" aria-pressed="true">Зона 1</button><button data-z="1" aria-pressed="false">Зона 2</button><button id="clrz">Стереть зоны</button></div>
+ <div class="row"><label for="thr">Авария, если машина стоит дольше</label><output id="thrv"></output><input id="thr" type="range" min="5" max="60" value="20"></div>
+ <div id="mst" class="mut">Загружаем модель ИИ…</div>
+</div>
+<div class="vwrap"><video id="vid" muted playsinline loop></video><canvas id="ov"></canvas></div>
+<dl class="st st4" id="ds"></dl>
+<div class="cmp" id="alert">Аварий не обнаружено</div>
+<button id="apply">Подать поток в симуляцию</button>
+<div id="map"></div>
+<p class="note">Авария определяется упрощённо: машина стоит в зоне дольше заданного времени. Машины на красном тоже стоят, поэтому в полной версии нужно учитывать сигнал светофора. Метки на карте ставятся в тестовой точке. Снимай перекрёсток с высоты под углом, а не строго сверху: так ИИ узнаёт машины лучше.</p>
+</section>
+<section id="tab-sim" hidden>
+<p class="sub">Слева светофор с постоянным циклом, справа адаптивный. Машины появляются одновременно и одинаково на обоих перекрёстках.</p>
+<section class="ctl">
+ <div class="row"><label for="ns">Поток север–юг</label><output id="nsv"></output><input id="ns" type="range" min="0" max="30" value="12"></div>
+ <div class="row"><label for="ew">Поток запад–восток</label><output id="ewv"></output><input id="ew" type="range" min="0" max="30" value="5"></div>
+ <div class="row"><label for="lt">Поворачивают налево</label><output id="ltv"></output><input id="lt" type="range" min="0" max="40" value="15"></div>
+ <div class="row"><label for="rt">Поворачивают направо</label><output id="rtv"></output><input id="rt" type="range" min="0" max="40" value="15"></div>
+ <div class="btns"><span>Скорость:</span>
+  <button data-sp="1" aria-pressed="false">1×</button><button data-sp="2" aria-pressed="true">2×</button><button data-sp="4" aria-pressed="false">4×</button><button data-sp="8" aria-pressed="false">8×</button>
+  <button id="reset">Сбросить</button></div>
+</section>
+<div class="cmp" id="cmp">Собираем статистику…</div>
+<div class="grid">
+ <article class="card"><h2>Обычный светофор</h2><div class="tag">зелёный всегда 30 с</div><canvas id="c0" aria-label="Перекрёсток с обычным светофором"></canvas><dl class="st" id="s0"></dl></article>
+ <article class="card"><h2>Адаптивный светофор</h2><div class="tag">зелёный зависит от очереди (10–45 с)</div><canvas id="c1" aria-label="Перекрёсток с адаптивным светофором"></canvas><dl class="st" id="s1"></dl></article>
+</div>
+<p class="note">Потоки заданы в машинах в минуту на каждый подъезд. Фиолетовые машины поворачивают налево и ждут просвета во встречном потоке, как на настоящем перекрёстке. При очень большом потоке оба светофора перегружены, и адаптивный выигрывает не всегда. В готовом проекте число машин в очереди будет считать нейросеть по видео с камеры, а здесь оно берётся прямо из симуляции. Результат зависит от потока: при равных потоках выигрыш небольшой, при неравных он заметнее.</p>
+</section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const S=320,C=160,HW=34,LEN=14,WID=8,A=C-HW,STOPQ=A-6,V0=60,EXY=17,HOLD=0;
+const ANG=[0,Math.PI,-Math.PI/2,Math.PI/2];
+const EXIT=[[0,1,2,3],[3,2,0,1],[2,3,1,0]];
+const axisOf=d=>d<2?0:1;
+function bez(p0,p1,p2){const pts=[];for(let i=0;i<=12;i++){const t=i/12,u=1-t;pts.push([u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0],u*u*p0[1]+2*u*t*p1[1]+t*t*p2[1]])}return pts}
+function mkPath(pts){const cum=[0];for(let i=1;i<pts.length;i++)cum.push(cum[i-1]+Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]));return{pts,cum,len:cum[cum.length-1]}}
+const PATH=[mkPath([[-25,-HW],[-EXY,HW]]),mkPath(bez([-25,-HW],[-25,-EXY],[-HW,-EXY])),mkPath(bez([-9,-HW],[-9,25],[HW,25]))];
+function cpos(r,q){
+ if(q<A)return[r===2?-9:-25,-C+q];
+ const P=PATH[r],s=q-A;
+ if(s<P.len){let i=1;while(P.cum[i]<s)i++;const f=(s-P.cum[i-1])/(P.cum[i]-P.cum[i-1]),a=P.pts[i-1],b=P.pts[i];return[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f]}
+ const t=s-P.len;
+ return r===0?[-EXY,HW+t]:r===1?[-HW-t,-EXY]:[HW+t,25];
+}
+function wpos(d,x,y){return d===0?[C+x,C+y]:d===1?[C-x,C-y]:d===2?[C+y,C-x]:[C-y,C+x]}
+function mk(kind){return{kind,cars:[],pend:Array.from({length:4},()=>[[],[]]),phase:0,sub:'green',el:0,planned:20,done:0,tw:0}}
+let sims,rate={ns:12,ew:5,lt:15,rt:15},speed=2;
+function reset(){sims=[mk('fixed'),mk('adaptive')]}
+reset();
+function pendN(s){let n=0;for(const p of s.pend)n+=p[0].length+p[1].length;return n}
+function queue(s,ax){let n=0;for(const c of s.cars)if(axisOf(c.d)===ax&&c.q<STOPQ+2)n++;return n}
+function setSub(s,v){s.sub=v;s.el=0}
+function startGreen(s){s.planned=Math.min(45,10+2*queue(s,s.phase))}
+function ctrl(s,h){
+ s.el+=h;
+ if(s.sub==='yellow'){if(s.el>=3)setSub(s,'allred');return}
+ if(s.sub==='allred'){if(s.el>=3){s.phase^=1;setSub(s,'green');startGreen(s)}return}
+ if(s.kind==='fixed'){if(s.el>=30)setSub(s,'yellow');return}
+ const qc=queue(s,s.phase),qo=queue(s,s.phase^1);
+ if(qo>0&&(s.el>=s.planned||(s.el>=8&&qc===0)||s.el>=45))setSub(s,'yellow');
+}
+function threat(s,d){
+ for(const o of s.cars)if(o.d===(d^1)&&o.r<2){const w=o.v<15?70:120;if(o.q>A-w&&o.q<A+40)return true}
+ return false;
+}
+function step(s,h){
+ ctrl(s,h);
+ for(let d=0;d<4;d++)for(let l=0;l<2;l++){
+  const pq=s.pend[d][l];
+  if(pq.length&&!s.cars.some(c=>c.d===d&&c.lane===l&&c.q<LEN+6)){const r=pq.shift();s.cars.push({d,r,lane:l,L:PATH[r].len,e:EXIT[r][d],q:0,v:V0*.8,w:0})}
+  s.tw+=pq.length*h;
+ }
+ for(const c of s.cars){
+  const ph=s.phase===axisOf(c.d),go=ph&&s.sub==='green',yel=ph&&s.sub==='yellow';
+  let lim=Infinity;
+  const ctx=c.q-A-c.L;
+  for(const o of s.cars){
+   if(o===c)continue;
+   if(o.d===c.d&&o.lane===c.lane&&o.q>c.q)lim=Math.min(lim,o.q-LEN-3);
+   if(o.e===c.e&&o.q>STOPQ){const otx=o.q-A-o.L;if(otx>ctx)lim=Math.min(lim,otx-LEN-3+A+c.L)}
+  }
+  if(c.q<=STOPQ&&!go&&!(yel&&STOPQ-c.q<12))lim=Math.min(lim,STOPQ);
+  if(c.r===2&&c.q<=A+HOLD&&(go||yel)&&threat(s,c.d))lim=Math.min(lim,A+HOLD);
+  const gap=lim-c.q;
+  let vm=V0;
+  if(c.r&&c.q>A-25&&c.q<A+c.L+6)vm=c.r===1?22:36;
+  const tv=Math.min(vm,Math.sqrt(2*150*Math.max(gap-2,0)));
+  c.v=c.v<tv?Math.min(tv,c.v+110*h):Math.max(tv,c.v-300*h);
+  c.q=Math.max(c.q,Math.min(c.q+c.v*h,lim));
+  if(c.v<3){c.w+=h;s.tw+=h}
+ }
+ s.cars=s.cars.filter(c=>{if(c.q-A-c.L>C-HW+LEN){s.done++;return false}return true});
+}
+
+const cv=[0,1].map(i=>document.getElementById('c'+i));
+const dpr=Math.min(window.devicePixelRatio||1,2);
+const cx=cv.map(c=>{c.width=S*dpr;c.height=S*dpr;const x=c.getContext('2d');x.setTransform(dpr,0,0,dpr,0,0);return x});
+function draw(s,x){
+ const cs=getComputedStyle(document.documentElement),g=cs.getPropertyValue('--grass'),r=cs.getPropertyValue('--road'),m=cs.getPropertyValue('--mark');
+ x.fillStyle=g;x.fillRect(0,0,S,S);
+ x.fillStyle=r;x.fillRect(C-HW,0,2*HW,S);x.fillRect(0,C-HW,S,2*HW);
+ for(let d=0;d<4;d++){
+  x.save();x.translate(C,C);x.rotate(ANG[d]);
+  x.strokeStyle=m;x.lineWidth=1.2;x.setLineDash([]);x.beginPath();
+  x.moveTo(-1.5,-C);x.lineTo(-1.5,-HW);x.moveTo(1.5,-C);x.lineTo(1.5,-HW);x.stroke();
+  x.strokeStyle='rgba(255,255,255,.55)';x.lineWidth=1;x.setLineDash([6,6]);x.beginPath();
+  x.moveTo(-17,-C);x.lineTo(-17,STOPQ-C);x.stroke();x.setLineDash([]);
+  x.strokeStyle='#f4f4f4';x.lineWidth=2.5;x.beginPath();x.moveTo(-HW,STOPQ-C);x.lineTo(0,STOPQ-C);x.stroke();
+  let col='#e5484d';
+  if(s.phase===axisOf(d)){if(s.sub==='green')col='#30c26a';else if(s.sub==='yellow')col='#f5b82e'}
+  x.fillStyle='#111';x.beginPath();x.arc(-HW-9,STOPQ-C,7,0,7);x.fill();
+  x.fillStyle=col;x.beginPath();x.arc(-HW-9,STOPQ-C,5,0,7);x.fill();
+  x.restore();
+ }
+ for(const c of s.cars){
+  const f=wpos(c.d,...cpos(c.r,c.q)),b=wpos(c.d,...cpos(c.r,c.q-LEN));
+  x.save();x.translate((f[0]+b[0])/2,(f[1]+b[1])/2);x.rotate(Math.atan2(f[1]-b[1],f[0]-b[0]));
+  x.fillStyle=c.v<3?'#e8590c':(c.r===2?'#8b5cf6':'#2f7bf5');x.fillRect(-LEN/2,-WID/2,LEN,WID);
+  x.fillStyle='rgba(255,255,255,.55)';x.fillRect(LEN/2-5,-WID/2+1,3,WID-2);
+  x.restore();
+ }
+}
+const fmt=s=>s.done>=5?(s.tw/s.done).toFixed(1)+' с':'—';
+function stats(){
+ sims.forEach((s,i)=>{
+  const q=s.cars.filter(c=>c.v<3).length+pendN(s);
+  document.getElementById('s'+i).innerHTML=
+   `<div><dt>Среднее ожидание</dt><dd>${fmt(s)}</dd></div><div><dt>В очереди</dt><dd>${q}</dd></div><div><dt>Проехало</dt><dd>${s.done}</dd></div>`;
+ });
+ const [a,b]=sims,el=document.getElementById('cmp');
+ if(a.done>=15&&b.done>=15){
+  const wa=a.tw/a.done,wb=b.tw/b.done,d=(wa-wb)/wa*100;
+  el.style.color=d>=0?'var(--ac)':'var(--bad)';
+  el.textContent=d>=0?`Адаптивный светофор: ожидание меньше на ${d.toFixed(0)}% (${wa.toFixed(1)} с → ${wb.toFixed(1)} с)`
+   :`При таком потоке адаптивный светофор хуже на ${(-d).toFixed(0)}% (${wa.toFixed(1)} с → ${wb.toFixed(1)} с)`;
+ }else{el.style.color='';el.textContent='Собираем статистику…'}
+}
+let last=performance.now(),acc=0,stT=0;
+function loop(t){
+ if(document.getElementById('tab-sim').hidden){last=t;requestAnimationFrame(loop);return}
+ const dt=Math.min((t-last)/1000,.1);last=t;
+ acc+=dt*speed;
+ const h=1/30;
+ while(acc>=h){
+  acc-=h;
+  const rr=[rate.ns,rate.ns,rate.ew,rate.ew];
+  for(let d=0;d<4;d++)if(Math.random()<rr[d]/60*h){const u=Math.random(),r=u<rate.lt/100?2:u<(rate.lt+rate.rt)/100?1:0,l=r===2?1:0;sims[0].pend[d][l].push(r);sims[1].pend[d][l].push(r)}
+  sims.forEach(s=>step(s,h));
+ }
+ sims.forEach((s,i)=>draw(s,cx[i]));
+ stT+=dt;if(stT>.3){stT=0;stats()}
+ requestAnimationFrame(loop);
+}
+function bindRange(id,key){
+ const el=document.getElementById(id),out=document.getElementById(id+'v');
+ const upd=()=>{rate[key]=+el.value;out.textContent=el.value+' маш/мин на подъезд'};
+ el.addEventListener('input',upd);upd();
+}
+bindRange('ns','ns');bindRange('ew','ew');
+['lt','rt'].forEach(id=>{const el=document.getElementById(id),out=document.getElementById(id+'v');const u=()=>{rate[id]=+el.value;out.textContent=el.value+'%'};el.addEventListener('input',u);u()});
+document.querySelectorAll('[data-sp]').forEach(b=>b.addEventListener('click',()=>{
+ speed=+b.dataset.sp;document.querySelectorAll('[data-sp]').forEach(x=>x.setAttribute('aria-pressed',x===b))}));
+document.getElementById('reset').addEventListener('click',()=>{reset();stats()});
+requestAnimationFrame(loop);
+(function(){
+const $=id=>document.getElementById(id);
+const vid=$('vid'),ov=$('ov'),ox=ov.getContext('2d');
+const CLS=['car','truck','bus','motorcycle'],COL=['#30c26a','#2f7bf5'];
+let model=null,map=null,zones=[null,null],zsel=0,dets=[],tracks=[],nid=1,arr=[[],[]],t0=performance.now(),drag=null,stream=null,lastT=0;
+if(typeof L!=='undefined'){
+ map=L.map('map').setView([51.1605,71.4704],12);
+ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+}else $('map').textContent='Карта не загрузилась (нужен интернет).';
+document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{
+ const n=b.dataset.tab;
+ document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',x===b));
+ $('tab-det').hidden=n!=='det';$('tab-sim').hidden=n!=='sim';
+ if(n==='det'&&map)setTimeout(()=>map.invalidateSize(),50);
+}));
+if(typeof cocoSsd==='undefined')$('mst').textContent='Библиотека ИИ не загрузилась (нужен интернет и запуск на своём сайте).';
+else cocoSsd.load({base:'lite_mobilenet_v2'}).then(m=>{model=m;$('mst').textContent='Модель готова. Выбери видео или включи камеру.'}).catch(()=>{$('mst').textContent='Модель не загрузилась. Проверь интернет и обнови страницу.'});
+const thr=$('thr');thr.addEventListener('input',()=>$('thrv').textContent=thr.value+' с');$('thrv').textContent=thr.value+' с';
+function resetTrack(){tracks=[];arr=[[],[]];dets=[];t0=performance.now();ddraw();dstats()}
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+$('vf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;stopCam();vid.srcObject=null;vid.src=URL.createObjectURL(f);$('mst').textContent='Загружаю видео…';vid.play().catch(()=>{});resetTrack()});
+$('cam').addEventListener('click',async()=>{
+ try{stopCam();stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});vid.removeAttribute('src');vid.srcObject=stream;await vid.play();resetTrack()}
+ catch(e){$('mst').textContent='Камера недоступна. Разреши доступ в браузере или выбери видео.'}
+});
+$('pp').addEventListener('click',()=>{vid.paused?vid.play():vid.pause()});
+vid.addEventListener('pause',()=>$('pp').textContent='Продолжить');
+vid.addEventListener('play',()=>{$('pp').textContent='Пауза';const n=performance.now();tracks.forEach(t=>{t.lt=n;t.seen=n})});
+vid.addEventListener('loadedmetadata',()=>{ov.width=vid.videoWidth;ov.height=vid.videoHeight;ddraw();$('mst').textContent=model?'Видео загружено. Рисуй зоны пальцем.':'Видео загружено. Жду модель ИИ…'});
+vid.addEventListener('error',()=>{$('mst').textContent='Видео не открылось. Нужен MP4 (H.264). Файлы .mov с iPhone и MKV часто не поддерживаются: конвертируй в MP4.'});
+vid.addEventListener('timeupdate',()=>{if(vid.currentTime<lastT-.5)tracks=[];lastT=vid.currentTime});
+document.querySelectorAll('[data-z]').forEach(b=>b.addEventListener('click',()=>{zsel=+b.dataset.z;document.querySelectorAll('[data-z]').forEach(x=>x.setAttribute('aria-pressed',x===b))}));
+$('clrz').addEventListener('click',()=>{zones=[null,null];ddraw()});
+const pt=e=>{const r=ov.getBoundingClientRect();return[Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),Math.min(1,Math.max(0,(e.clientY-r.top)/r.height))]};
+ov.addEventListener('pointerdown',e=>{ov.setPointerCapture(e.pointerId);const[x,y]=pt(e);drag=[x,y,x,y]});
+ov.addEventListener('pointermove',e=>{if(!drag)return;const[x,y]=pt(e);drag[2]=x;drag[3]=y;ddraw()});
+ov.addEventListener('pointerup',()=>{
+ if(!drag)return;const[a,b,c,d]=drag;drag=null;
+ if(Math.abs(c-a)>.03&&Math.abs(d-b)>.03)zones[zsel]=[Math.min(a,c),Math.min(b,d),Math.max(a,c),Math.max(b,d)];
+ ddraw();
+});
+const inZone=(z,x,y)=>!!z&&x>=z[0]&&x<=z[2]&&y>=z[1]&&y<=z[3];
+function accident(z){
+ const tm=new Date().toLocaleTimeString('ru-RU');
+ $('alert').style.color='var(--bad)';
+ $('alert').textContent='Возможная авария: '+tm+', зона '+(z+1)+(map?'. Метка добавлена на карту.':'.');
+ if(map)L.circleMarker([51.1605+(Math.random()-.5)*.01,71.4704+(Math.random()-.5)*.01],{radius:9,color:'#e5484d',fillOpacity:.7}).addTo(map).bindPopup('Возможная авария, '+tm+', зона '+(z+1)).openPopup();
+}
+function track(now){
+ const used=new Set();
+ for(const d of dets){
+  d.cx=d.x+d.w/2;d.cy=d.y+d.h/2;
+  let best=null,bd=.08;
+  for(const t of tracks){if(used.has(t))continue;const k=Math.hypot(t.cx-d.cx,t.cy-d.cy);if(k<bd){bd=k;best=t}}
+  if(best){
+   used.add(best);best.cx=d.cx;best.cy=d.cy;best.seen=now;d.t=best;
+   if(Math.hypot(best.cx-best.lx,best.cy-best.ly)>.02){best.lx=best.cx;best.ly=best.cy;best.lt=now}
+  }else{const t={id:nid++,cx:d.cx,cy:d.cy,lx:d.cx,ly:d.cy,lt:now,seen:now,z:-1,al:false};tracks.push(t);used.add(t);d.t=t}
+ }
+ tracks=tracks.filter(t=>now-t.seen<2000);
+ for(const t of tracks){
+  const z=zones.findIndex(q=>inZone(q,t.cx,t.cy));
+  if(z>=0&&t.z!==z)arr[z].push(now);
+  t.z=z;
+  if(z>=0&&!t.al&&now-t.lt>thr.value*1000&&now-t.seen<500){t.al=true;accident(z)}
+ }
+}
+function rates(){
+ const now=performance.now(),el=Math.min(60000,now-t0);
+ return arr.map(a=>el>5000?Math.round(a.filter(t=>t>now-60000).length*60000/el):0);
+}
+function dstats(){
+ const q=[0,1].map(z=>dets.filter(d=>inZone(zones[z],d.cx,d.cy)).length),r=rates();
+ $('ds').innerHTML=`<div><dt>Зона 1 сейчас</dt><dd>${q[0]}</dd></div><div><dt>Зона 2 сейчас</dt><dd>${q[1]}</dd></div><div><dt>Поток 1, маш/мин</dt><dd>${r[0]}</dd></div><div><dt>Поток 2, маш/мин</dt><dd>${r[1]}</dd></div>`;
+}
+function ddraw(){
+ const W=ov.width,H=ov.height;ox.clearRect(0,0,W,H);ox.lineWidth=Math.max(2,W/320);
+ zones.forEach((z,i)=>{
+  if(!z)return;
+  ox.fillStyle=COL[i]+'33';ox.strokeStyle=COL[i];
+  ox.fillRect(z[0]*W,z[1]*H,(z[2]-z[0])*W,(z[3]-z[1])*H);ox.strokeRect(z[0]*W,z[1]*H,(z[2]-z[0])*W,(z[3]-z[1])*H);
+  ox.fillStyle=COL[i];ox.font='bold '+Math.round(W/28)+'px system-ui';ox.fillText('Зона '+(i+1),z[0]*W+6,z[1]*H+W/26);
+ });
+ if(drag){ox.strokeStyle=COL[zsel];ox.setLineDash([6,4]);ox.strokeRect(Math.min(drag[0],drag[2])*W,Math.min(drag[1],drag[3])*H,Math.abs(drag[2]-drag[0])*W,Math.abs(drag[3]-drag[1])*H);ox.setLineDash([])}
+ const now=performance.now();
+ for(const d of dets){
+  ox.strokeStyle=d.t&&d.t.al?'#e5484d':(d.t&&now-d.t.lt>3000?'#e8590c':'#f5d90a');
+  ox.strokeRect(d.x*W,d.y*H,d.w*W,d.h*H);
+ }
+}
+async function tick(){
+ if(model&&vid.readyState>=2&&!vid.paused&&vid.videoWidth){
+  try{
+   const p=await model.detect(vid,30),W=vid.videoWidth,H=vid.videoHeight;
+   dets=p.filter(o=>CLS.includes(o.class)&&o.score>.4).map(o=>({x:o.bbox[0]/W,y:o.bbox[1]/H,w:o.bbox[2]/W,h:o.bbox[3]/H}));
+   track(performance.now());ddraw();dstats();
+  }catch(e){}
+ }
+ setTimeout(tick,150);
+}
+$('apply').addEventListener('click',()=>{
+ const r=rates();
+ if(!r[0]&&!r[1]){$('mst').textContent='Поток ещё не измерен: нарисуй зоны и подожди 10–15 секунд, пока машины въезжают в них.';return}
+ [['ns',r[0]],['ew',r[1]]].forEach(([id,v])=>{const e=$(id);e.value=Math.min(30,v);e.dispatchEvent(new Event('input'))});
+ window.reset();window.stats();
+ document.querySelector('[data-tab="sim"]').click();
+});
+dstats();tick();
+})();
+</script>
+</body>
+</html>
